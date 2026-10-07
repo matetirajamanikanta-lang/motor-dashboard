@@ -1,0 +1,337 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motor Monitor | IoT Dashboard</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0b1120;
+      color: #e5e7eb;
+    }
+
+    header {
+      padding: 24px 6%;
+      background: #111b2e;
+      border-bottom: 1px solid #263449;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    h1 { margin: 0; font-size: 25px; }
+    .subtitle { color: #9ca3af; margin-top: 8px; }
+
+    .status {
+      color: #fbbf24;
+      font-size: 14px;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: auto;
+      padding: 28px 5%;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 18px;
+    }
+
+    .card, .panel {
+      background: #111b2e;
+      border: 1px solid #263449;
+      border-radius: 16px;
+      padding: 22px;
+    }
+
+    .label { color: #9ca3af; font-size: 14px; }
+    .value { font-size: 38px; font-weight: bold; margin: 15px 0; }
+    .temp { color: #fb923c; }
+    .humidity { color: #38bdf8; }
+    .small { color: #9ca3af; font-size: 12px; }
+
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    h2 { font-size: 18px; margin-top: 0; }
+    .chart-wrap { height: 260px; }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      white-space: nowrap;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 14px 12px;
+      border-bottom: 1px solid #263449;
+    }
+
+    th { color: #9ca3af; }
+
+    #message {
+      margin: 18px 0;
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    footer {
+      text-align: center;
+      color: #6b7280;
+      padding: 25px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>⚙️ Motor Monitor</h1>
+      <div class="subtitle">ESP32 · DHT22 · Supabase</div>
+    </div>
+    <div id="status" class="status">● Connecting...</div>
+  </header>
+
+  <main>
+    <div class="cards">
+      <section class="card">
+        <div class="label">🌡️ Temperature</div>
+        <div class="value temp" id="temperature">-- °C</div>
+        <div class="small" id="temp-time">Waiting for data</div>
+      </section>
+
+      <section class="card">
+        <div class="label">💧 Humidity</div>
+        <div class="value humidity" id="humidity">-- %</div>
+        <div class="small" id="humidity-time">Waiting for data</div>
+      </section>
+
+      <section class="card">
+        <div class="label">📡 Data updates</div>
+        <div class="value" id="updates">0</div>
+        <div class="small">Successful dashboard refreshes</div>
+      </section>
+    </div>
+
+    <div id="message">Connecting to your database...</div>
+
+    <div class="charts">
+      <section class="panel">
+        <h2>Temperature history</h2>
+        <div class="chart-wrap">
+          <canvas id="temperatureChart"></canvas>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Humidity history</h2>
+        <div class="chart-wrap">
+          <canvas id="humidityChart"></canvas>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" style="margin-top:22px">
+      <h2>Recent sensor readings</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Temperature</th>
+              <th>Humidity</th>
+            </tr>
+          </thead>
+          <tbody id="readings">
+            <tr><td colspan="3">Waiting for sensor data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    IoT Motor Monitoring · Automatic refresh every 5 seconds
+  </footer>
+
+  <script>
+    // Replace these two values with your own project details.
+    const SUPABASE_URL = "https://xgfonvkbjeulelisyshj.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_TkBMTMjgyS9sLkXa9om_3w_UfW_k100";
+
+    const db = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_KEY
+    );
+
+    let updateCount = 0;
+
+    function makeChart(canvasId, label, color, unit) {
+      return new Chart(document.getElementById(canvasId), {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [{
+            label: label,
+            data: [],
+            borderColor: color,
+            backgroundColor: color + "22",
+            fill: true,
+            tension: 0.3,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: {
+              ticks: { color: "#9ca3af", maxTicksLimit: 6 },
+              grid: { color: "#263449" }
+            },
+            y: {
+              title: { display: true, text: unit, color: "#9ca3af" },
+              ticks: { color: "#9ca3af" },
+              grid: { color: "#263449" }
+            }
+          },
+          plugins: {
+            legend: { labels: { color: "#e5e7eb" } }
+          }
+        }
+      });
+    }
+
+    const tempChart = makeChart(
+      "temperatureChart", "Temperature", "#fb923c", "°C"
+    );
+
+    const humidityChart = makeChart(
+      "humidityChart", "Humidity", "#38bdf8", "%"
+    );
+
+    function formatTime(value) {
+      return new Date(value).toLocaleString();
+    }
+
+    async function loadReadings() {
+      const status = document.getElementById("status");
+      const message = document.getElementById("message");
+
+      try {
+        const { data, error } = await db
+          .from("motor_readings")
+          .select("id, created_at, temperature_c, humidity_pct")
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (error) throw error;
+
+        status.textContent = "● Connected";
+        status.style.color = "#4ade80";
+
+        if (!data || data.length === 0) {
+          message.textContent = "Connected, but no readings found yet.";
+          return;
+        }
+
+        const latest = data[0];
+
+        document.getElementById("temperature").textContent =
+          latest.temperature_c == null
+            ? "-- °C"
+            : Number(latest.temperature_c).toFixed(1) + " °C";
+
+        document.getElementById("humidity").textContent =
+          latest.humidity_pct == null
+            ? "-- %"
+            : Number(latest.humidity_pct).toFixed(1) + " %";
+
+        document.getElementById("temp-time").textContent =
+          "Updated: " + formatTime(latest.created_at);
+
+        document.getElementById("humidity-time").textContent =
+          "Updated: " + formatTime(latest.created_at);
+
+        // Reverse so the oldest of the latest 50 appears first.
+        const chronological = [...data].reverse();
+
+        const labels = chronological.map(row =>
+          new Date(row.created_at).toLocaleTimeString()
+        );
+
+        tempChart.data.labels = labels;
+        tempChart.data.datasets[0].data =
+          chronological.map(row => row.temperature_c);
+        tempChart.update();
+
+        humidityChart.data.labels = labels;
+        humidityChart.data.datasets[0].data =
+          chronological.map(row => row.humidity_pct);
+        humidityChart.update();
+
+        const tbody = document.getElementById("readings");
+        tbody.replaceChildren();
+
+        data.slice(0, 10).forEach(row => {
+          const tr = document.createElement("tr");
+
+          [
+            formatTime(row.created_at),
+            row.temperature_c == null
+              ? "--"
+              : Number(row.temperature_c).toFixed(1) + " °C",
+            row.humidity_pct == null
+              ? "--"
+              : Number(row.humidity_pct).toFixed(1) + " %"
+          ].forEach(value => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          });
+
+          tbody.appendChild(tr);
+        });
+
+        updateCount++;
+        document.getElementById("updates").textContent = updateCount;
+        message.textContent =
+          "Showing the latest " + data.length + " readings. " +
+          "Last checked: " + new Date().toLocaleTimeString();
+
+      } catch (error) {
+        status.textContent = "● Connection error";
+        status.style.color = "#f87171";
+        message.textContent = "Could not load readings: " + error.message;
+        console.error("Supabase error:", error);
+      }
+    }
+
+    loadReadings();
+    setInterval(loadReadings, 5000);
+  </script>
+</body>
+</html>
